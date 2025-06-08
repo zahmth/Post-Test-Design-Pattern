@@ -43,6 +43,11 @@ bool CheckWin(const std::vector<PuzzlePiece>& pieces, int gridSize, int gridOffs
     return true;
 }
 
+enum GameState {
+    MENU,
+    GAME
+};
+
 int main() {
     Font font = GetFontDefault();
 
@@ -55,14 +60,15 @@ int main() {
 
     const int gridSize = 3;
     const int cellSize = 100;
-    const int gridOffsetX = 500;
+    const int gridOffsetX = 450;
     const int gridOffsetY = 100;
 
     const int pieceStartX = 50;
     const int pieceStartY = 100;
 
     // Load image texture
-    Texture2D puzzleImage = LoadTexture("puzzle1.jpg");
+    Texture2D puzzleImage = LoadTexture("puzzle.png");
+    Texture2D boardImage = LoadTexture("board.png");
 
     // Calculate each piece's source rect
     int imageCellSizeX = puzzleImage.width / gridSize;
@@ -97,7 +103,40 @@ int main() {
     PuzzlePiece* draggingPiece = nullptr;
     bool isWin = false;
 
-    while (!WindowShouldClose()) {
+    GameState currentState = MENU;
+    Rectangle startButton = { screenWidth/2 - 100, screenHeight/2 - 30, 200, 50 };
+    Rectangle exitButton = { screenWidth/2 - 100, screenHeight/2 + 40, 200, 50 };
+
+while (!WindowShouldClose()) {
+    Vector2 mouse = GetMousePosition();
+
+    BeginDrawing();
+    ClearBackground(RAYWHITE);
+
+    if (currentState == MENU) {
+        DrawText("PUZZLE GAME", screenWidth/2 - MeasureText("PUZZLE GAME", 40)/2, 100, 40, DARKGRAY);
+
+        // Warna hover
+        Color startColor = CheckCollisionPointRec(mouse, startButton) ?  SKYBLUE : BLUE;
+        Color exitColor = CheckCollisionPointRec(mouse, exitButton) ? PINK : RED;
+
+        DrawRectangleRec(startButton, startColor);
+        DrawText("START GAME", startButton.x + 30, startButton.y + 15, 20, WHITE);
+
+        DrawRectangleRec(exitButton, exitColor);
+        DrawText("EXIT", exitButton.x + 80, exitButton.y + 15, 20, WHITE);
+
+
+        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+            if (CheckCollisionPointRec(mouse, startButton)) {
+                currentState = GAME;
+            }
+            if (CheckCollisionPointRec(mouse, exitButton)) {
+                break;
+            }
+        }
+
+    } else if (currentState == GAME) {
         Vector2 mouse = GetMousePosition();
 
         // Handle Drag Start
@@ -137,26 +176,17 @@ int main() {
         isWin = CheckWin(pieces, gridSize, gridOffsetX, gridOffsetY, cellSize);
 
         // Drawing
-        BeginDrawing();
         ClearBackground(RAYWHITE);
 
-        DrawText("Susun puzzle ke grid di kanan!", 10, 10, 20, DARKGRAY);
+        DrawText("Susun puzzle ke grid di kanan!", 80, 20, 40, DARKGRAY);
 
         if (isWin) {
-            DrawText("YOU WIN!", screenWidth / 2 - 60, 50, 40, GREEN);
+            DrawText("YOU WIN!", 100, 220, 40, GREEN);
         }
 
-        // Grid Board (kanan) with white gaps
-        for (int row = 0; row < gridSize; row++) {
-            for (int col = 0; col < gridSize; col++) {
-                DrawRectangle(
-                    gridOffsetX + col * cellSize,
-                    gridOffsetY + row * cellSize,
-                    cellSize, cellSize,
-                    LIGHTGRAY
-                );
-            }
-        }
+        // Gambar papan grid sebagai satu gambar
+        DrawTexture(boardImage, gridOffsetX, gridOffsetY, WHITE);
+
 
         // Draw pieces (no borders)
         for (auto& piece : pieces) {
@@ -170,10 +200,13 @@ int main() {
             );
         }
 
-        EndDrawing();
     }
 
+    EndDrawing();
+}
+
     UnloadTexture(puzzleImage);
+    UnloadTexture(boardImage);
     CloseWindow();
     return 0;
 }
