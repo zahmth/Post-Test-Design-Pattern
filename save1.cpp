@@ -1,15 +1,18 @@
 #include "raylib.h"
+#include "BestTimeManager.h"
 #include <vector>
 #include <ctime>
 #include <cstdlib>
-#include <algorithm> // for std::shuffle
+#include <algorithm>
+#include <cstdio>
 
 struct PuzzlePiece {
-    Rectangle rect;       // Destination on screen
-    Rectangle sourceRect; // Source from the image
+    Rectangle rect;
+    Rectangle sourceRect;
     Vector2 offset;
     bool isDragging;
-    int targetRow, targetCol; // Correct answer position
+    int targetRow, targetCol;
+    float rotation = 0.0f;
 };
 
 class PuzzleFactory {
@@ -22,7 +25,6 @@ public:
             (float)cellSize,
             (float)cellSize
         };
-        piece.sourceRect = { 0 }; // Will set later based on image
         piece.offset = {0, 0};
         piece.isDragging = false;
         piece.targetRow = row;
@@ -36,7 +38,7 @@ bool CheckWin(const std::vector<PuzzlePiece>& pieces, int gridSize, int gridOffs
         int col = (piece.rect.x - gridOffsetX + cellSize / 2) / cellSize;
         int row = (piece.rect.y - gridOffsetY + cellSize / 2) / cellSize;
 
-        if (col != piece.targetCol || row != piece.targetRow) {
+        if (col != piece.targetCol || row != piece.targetRow || ((int)piece.rotation % 360) != 0) {
             return false;
         }
     }
@@ -45,168 +47,210 @@ bool CheckWin(const std::vector<PuzzlePiece>& pieces, int gridSize, int gridOffs
 
 enum GameState {
     MENU,
-    GAME
+    PUZZLE1,
+    PUZZLE2,
+    WIN
 };
 
 int main() {
-    Font font = GetFontDefault();
-
-    const int screenWidth = 800;
-    const int screenHeight = 600;
-    InitWindow(screenWidth, screenHeight, "Puzzle Grid with Win Detection");
-
+    InitWindow(1000, 750, "Puzzle Piece");
     SetTargetFPS(60);
     srand((unsigned)time(0));
 
-    const int gridSize = 3;
-    const int cellSize = 100;
-    const int gridOffsetX = 450;
-    const int gridOffsetY = 100;
+    Font font = GetFontDefault();
+    Texture2D puzzle1Image = LoadTexture("puzzle.png");
+    Texture2D puzzle2Image = LoadTexture("puzzle2.png");
+    Texture2D boardImage3x3 = LoadTexture("board.png");
+    Texture2D boardImage4x4 = LoadTexture("board4x4.png");
 
+    const int cellSize = 100;
     const int pieceStartX = 50;
     const int pieceStartY = 100;
+    const int gridOffsetX = 600;
+    const int gridOffsetY = 100;
 
-    // Load image texture
-    Texture2D puzzleImage = LoadTexture("puzzle.png");
-    Texture2D boardImage = LoadTexture("board.png");
+    int currentGridSize = 3;
+    Texture2D* currentImage = &puzzle1Image;
+    Texture2D* currentBoardImage = &boardImage3x3;
 
-    // Calculate each piece's source rect
-    int imageCellSizeX = puzzleImage.width / gridSize;
-    int imageCellSizeY = puzzleImage.height / gridSize;
-
-    // Create all pieces
     std::vector<PuzzlePiece> pieces;
-    for (int row = 0; row < gridSize; row++) {
-        for (int col = 0; col < gridSize; col++) {
-            PuzzlePiece piece = PuzzleFactory::Create(row, col, cellSize, pieceStartX, pieceStartY);
-            piece.sourceRect = {
-                (float)(col * imageCellSizeX),
-                (float)(row * imageCellSizeY),
-                (float)imageCellSizeX,
-                (float)imageCellSizeY
-            };
-            pieces.push_back(piece);
+    auto resetPuzzle = [&](int gridSize) {
+        pieces.clear();
+        int imageCellSizeX = currentImage->width / gridSize;
+        int imageCellSizeY = currentImage->height / gridSize;
+
+        for (int row = 0; row < gridSize; row++) {
+            for (int col = 0; col < gridSize; col++) {
+                PuzzlePiece piece = PuzzleFactory::Create(row, col, cellSize, pieceStartX, pieceStartY);
+                piece.sourceRect = {
+                    (float)(col * imageCellSizeX),
+                    (float)(row * imageCellSizeY),
+                    (float)imageCellSizeX,
+                    (float)imageCellSizeY
+                };
+                piece.rotation = 0.0f;
+                pieces.push_back(piece);
+            }
         }
-    }
 
-    // Randomize the initial positions of the puzzle pieces on the left
-    std::random_shuffle(pieces.begin(), pieces.end());
-
-    // Adjust positions after shuffle
-    for (int i = 0; i < pieces.size(); i++) {
-        int row = i / gridSize;
-        int col = i % gridSize;
-        pieces[i].rect.x = pieceStartX + col * (cellSize + 10);
-        pieces[i].rect.y = pieceStartY + row * (cellSize + 10);
-    }
-
-    PuzzlePiece* draggingPiece = nullptr;
-    bool isWin = false;
+        std::random_shuffle(pieces.begin(), pieces.end());
+        for (int i = 0; i < pieces.size(); i++) {
+            int row = i / gridSize;
+            int col = i % gridSize;
+            pieces[i].rect.x = pieceStartX + col * (cellSize + 10);
+            pieces[i].rect.y = pieceStartY + row * (cellSize + 10);
+        }
+    };
 
     GameState currentState = MENU;
-    Rectangle startButton = { screenWidth/2 - 100, screenHeight/2 - 30, 200, 50 };
-    Rectangle exitButton = { screenWidth/2 - 100, screenHeight/2 + 40, 200, 50 };
+    PuzzlePiece* draggingPiece = nullptr;
 
-while (!WindowShouldClose()) {
-    Vector2 mouse = GetMousePosition();
+    Rectangle startButton = { 400, 300, 200, 50 };
+    Rectangle exitButton = { 400, 370, 200, 50 };
+    Rectangle retryButton = { 300, 300, 200, 50 };
+    Rectangle exitButtonWin = { 300, 370, 200, 50 };
 
-    BeginDrawing();
-    ClearBackground(RAYWHITE);
+    bool isWin = false;
+    float gameTimer = 0.0f;
+    bool timerRunning = false;
 
-    if (currentState == MENU) {
-        DrawText("PUZZLE GAME", screenWidth/2 - MeasureText("PUZZLE GAME", 40)/2, 100, 40, DARKGRAY);
-
-        // Warna hover
-        Color startColor = CheckCollisionPointRec(mouse, startButton) ?  SKYBLUE : BLUE;
-        Color exitColor = CheckCollisionPointRec(mouse, exitButton) ? PINK : RED;
-
-        DrawRectangleRec(startButton, startColor);
-        DrawText("START GAME", startButton.x + 30, startButton.y + 15, 20, WHITE);
-
-        DrawRectangleRec(exitButton, exitColor);
-        DrawText("EXIT", exitButton.x + 80, exitButton.y + 15, 20, WHITE);
-
-
-        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
-            if (CheckCollisionPointRec(mouse, startButton)) {
-                currentState = GAME;
-            }
-            if (CheckCollisionPointRec(mouse, exitButton)) {
-                break;
-            }
-        }
-
-    } else if (currentState == GAME) {
+    while (!WindowShouldClose()) {
         Vector2 mouse = GetMousePosition();
+        BeginDrawing();
+        ClearBackground(RAYWHITE);
 
-        // Handle Drag Start
-        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
-            for (auto& piece : pieces) {
-                if (CheckCollisionPointRec(mouse, piece.rect)) {
-                    piece.isDragging = true;
-                    piece.offset = { mouse.x - piece.rect.x, mouse.y - piece.rect.y };
-                    draggingPiece = &piece;
+        if (currentState == MENU) {
+            DrawText("PUZZLE GAME", 350, 100, 40, DARKGRAY);
+            DrawRectangleRec(startButton, CheckCollisionPointRec(mouse, startButton) ? SKYBLUE : BLUE);
+            DrawText("START GAME", 430, 315, 20, WHITE);
+            DrawRectangleRec(exitButton, CheckCollisionPointRec(mouse, exitButton) ? PINK : RED);
+            DrawText("EXIT", 470, 385, 20, WHITE);
+
+            if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+                if (CheckCollisionPointRec(mouse, startButton)) {
+                    currentState = PUZZLE1;
+                    currentGridSize = 3;
+                    currentImage = &puzzle1Image;
+                    currentBoardImage = &boardImage3x3;
+                    resetPuzzle(currentGridSize);
+                    gameTimer = 0.0f;
+                    timerRunning = true;
+                    isWin = false;
+                } else if (CheckCollisionPointRec(mouse, exitButton)) {
                     break;
+                }
+            }
+
+        } else if (currentState == PUZZLE1 || currentState == PUZZLE2 || currentState == WIN) {
+            if (timerRunning && !isWin) gameTimer += GetFrameTime();
+
+            if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+                for (auto& piece : pieces) {
+                    if (CheckCollisionPointRec(mouse, piece.rect)) {
+                        piece.isDragging = true;
+                        piece.offset = { mouse.x - piece.rect.x, mouse.y - piece.rect.y };
+                        draggingPiece = &piece;
+                        break;
+                    }
+                }
+            }
+
+            if (draggingPiece && draggingPiece->isDragging) {
+                draggingPiece->rect.x = mouse.x - draggingPiece->offset.x;
+                draggingPiece->rect.y = mouse.y - draggingPiece->offset.y;
+
+                if (IsMouseButtonPressed(MOUSE_RIGHT_BUTTON)) {
+                    draggingPiece->rotation += 90;
+                    if (draggingPiece->rotation >= 360) draggingPiece->rotation = 0;
+                }
+            }
+
+            if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON) && draggingPiece) {
+                int col = (draggingPiece->rect.x - gridOffsetX + cellSize / 2) / cellSize;
+                int row = (draggingPiece->rect.y - gridOffsetY + cellSize / 2) / cellSize;
+
+                if (row >= 0 && row < currentGridSize && col >= 0 && col < currentGridSize) {
+                    draggingPiece->rect.x = gridOffsetX + col * cellSize;
+                    draggingPiece->rect.y = gridOffsetY + row * cellSize;
+                }
+
+                draggingPiece->isDragging = false;
+                draggingPiece = nullptr;
+            }
+
+            DrawText("Susun puzzle ke puzzle board!", 80, 20, 40, DARKGRAY);
+            DrawTexture(*currentBoardImage, gridOffsetX, gridOffsetY, WHITE);
+
+            for (auto& piece : pieces) {
+                DrawTexturePro(
+                    *currentImage,
+                    piece.sourceRect,
+                    piece.rect,
+                    {0, 0},
+                    piece.rotation,
+                    WHITE
+                );
+            }
+
+            isWin = CheckWin(pieces, currentGridSize, gridOffsetX, gridOffsetY, cellSize);
+            if (isWin) {
+                if (currentState == PUZZLE1) {
+                    currentState = PUZZLE2;
+                    currentGridSize = 4;
+                    currentImage = &puzzle2Image;
+                    currentBoardImage = &boardImage4x4;
+                    resetPuzzle(currentGridSize);
+                    isWin = false;
+                } else if (currentState == PUZZLE2) {
+                    currentState = WIN;
+                    timerRunning = false;
+                    BestTimeManager::GetInstance().UpdateBestTime(gameTimer);
+                }
+            }
+
+            char timerText[64];
+            snprintf(timerText, sizeof(timerText), "Time: %.2f", gameTimer);
+            DrawText(timerText, 20, 700, 20, DARKGRAY);
+
+            float best = BestTimeManager::GetInstance().GetBestTime();
+            if (best >= 0) {
+                char bestText[64];
+                snprintf(bestText, sizeof(bestText), "Best: %.2f", best);
+                DrawText(bestText, 20, 730, 20, DARKGRAY);
+            }
+
+            if (currentState == WIN) {
+                DrawText("YOU WIN!", 280, 200, 40, GREEN);
+                DrawRectangleRec(retryButton, CheckCollisionPointRec(mouse, retryButton) ? ORANGE : GOLD);
+                DrawText("RETRY", 370, 315, 20, WHITE);
+                DrawRectangleRec(exitButtonWin, CheckCollisionPointRec(mouse, exitButtonWin) ? PINK : RED);
+                DrawText("EXIT", 380, 385, 20, WHITE);
+
+                if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+                    if (CheckCollisionPointRec(mouse, retryButton)) {
+                        currentState = PUZZLE1;
+                        currentGridSize = 3;
+                        currentImage = &puzzle1Image;
+                        currentBoardImage = &boardImage3x3;
+                        resetPuzzle(currentGridSize);
+                        gameTimer = 0.0f;
+                        timerRunning = true;
+                        isWin = false;
+                    } else if (CheckCollisionPointRec(mouse, exitButtonWin)) {
+                        CloseWindow();
+                        return 0;
+                    }
                 }
             }
         }
 
-        // Handle Drag Move
-        if (draggingPiece && draggingPiece->isDragging) {
-            draggingPiece->rect.x = mouse.x - draggingPiece->offset.x;
-            draggingPiece->rect.y = mouse.y - draggingPiece->offset.y;
-        }
-
-        // Handle Drag End
-        if (IsMouseButtonReleased(MOUSE_LEFT_BUTTON) && draggingPiece) {
-            int col = (draggingPiece->rect.x - gridOffsetX + cellSize / 2) / cellSize;
-            int row = (draggingPiece->rect.y - gridOffsetY + cellSize / 2) / cellSize;
-
-            // Snap into grid if within bounds
-            if (row >= 0 && row < gridSize && col >= 0 && col < gridSize) {
-                draggingPiece->rect.x = gridOffsetX + col * cellSize;
-                draggingPiece->rect.y = gridOffsetY + row * cellSize;
-            }
-
-            draggingPiece->isDragging = false;
-            draggingPiece = nullptr;
-        }
-
-        // Win detection
-        isWin = CheckWin(pieces, gridSize, gridOffsetX, gridOffsetY, cellSize);
-
-        // Drawing
-        ClearBackground(RAYWHITE);
-
-        DrawText("Susun puzzle ke grid di kanan!", 80, 20, 40, DARKGRAY);
-
-        if (isWin) {
-            DrawText("YOU WIN!", 100, 220, 40, GREEN);
-        }
-
-        // Gambar papan grid sebagai satu gambar
-        DrawTexture(boardImage, gridOffsetX, gridOffsetY, WHITE);
-
-
-        // Draw pieces (no borders)
-        for (auto& piece : pieces) {
-            DrawTexturePro(
-                puzzleImage,
-                piece.sourceRect,
-                piece.rect,
-                {0,0},
-                0.0f,
-                WHITE
-            );
-        }
-
+        EndDrawing();
     }
 
-    EndDrawing();
-}
-
-    UnloadTexture(puzzleImage);
-    UnloadTexture(boardImage);
+    UnloadTexture(puzzle1Image);
+    UnloadTexture(puzzle2Image);
+    UnloadTexture(boardImage3x3);
+    UnloadTexture(boardImage4x4);
     CloseWindow();
     return 0;
 }

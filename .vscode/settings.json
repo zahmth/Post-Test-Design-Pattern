@@ -35,7 +35,6 @@
   ],
   "C_Cpp_Runner.enableWarnings": true,
   "C_Cpp_Runner.warningsAsError": false,
-  "C_Cpp_Runner.cppCompilerPath": "g++",
   "C_Cpp_Runner.compilerArgs": [
     "save1.cpp"
   ],
@@ -109,6 +108,7 @@
     "streambuf": "cpp",
     "text_encoding": "cpp",
     "typeinfo": "cpp",
-    "variant": "cpp"
+    "variant": "cpp",
+    "sstream": "cpp"
   }
 }
